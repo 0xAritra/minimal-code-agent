@@ -8,7 +8,7 @@ from functions.run_python_file import schema_run_python_file, run_python_file
 from functions.write_file import schema_write_file, write_file
 from functions.get_file_content import schema_get_file_content, get_file_content
 
-func_mppng = {
+func_mapping = {
     "get_files_info": get_files_info,
     "write_file": write_file,
     "get_file_content": get_file_content,
@@ -24,7 +24,7 @@ def call_function(function_call_part, verbose=False):
     function_name = function_call_part.name
     function_args = function_call_part.args
     function_args["working_dir"] = "./calculator"
-    if function_name not in func_mppng:
+    if function_name not in func_mapping:
         return types.Content(
             role="tool",
             parts=[
@@ -34,7 +34,7 @@ def call_function(function_call_part, verbose=False):
                 )],
             )
 
-    function_result = func_mppng[function_name](**function_args)
+    function_result = func_mapping[function_name](**function_args)
     return types.Content(
     role="tool",
     parts=[
@@ -76,29 +76,41 @@ All paths you provide should be relative to the working directory. You do not ne
     if (user_prompt):
         # Messages
         messages = [types.Content(role="user", parts=[types.Part(text=user_prompt)])]
-        response = client.models.generate_content(model="gemini-2.0-flash-001", contents=messages, config=types.GenerateContentConfig(tools=[ available_functions ], system_instruction=system_prompt))
-        # print(response.text)
-        # func_calls_str = ""
-        function_call_responses = []
-        is_verbose = False
-        if ("verbose" in flags):
-            is_verbose = True
-        if (response.function_calls != None):
-            for function_call_part in response.function_calls:
-                # func_calls_str += f"Calling function: {function_call_part.name}({function_call_part.args})\n"
-                function_call_result = call_function(function_call_part, verbose=is_verbose)
-                if not function_call_result.parts[0].function_response.response:
-                    raise Exception("Function Response missing")
-                function_call_responses.append(function_call_result.parts[0])
-                if is_verbose:
-                    print(f"-> {function_call_result.parts[0].function_response.response}") 
+        for _ in range(20):
+            try:
+                response = client.models.generate_content(model="gemini-2.0-flash-001", contents=messages, config=types.GenerateContentConfig(tools=[ available_functions ], system_instruction=system_prompt))
+                
+                for candidate in response.candidates:
+                    messages.append(candidate.content)
+                
+                if not response.function_calls:
+                    if response.text:
+                        print(f"Final Response:\n{response.text}")
+                        break
 
-        # if func_calls_str:
-        #     print(func_calls_str)
-        
-        if ("verbose" in flags):
-            print(f"User prompt: {user_prompt}")
-            print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}\nResponse tokens: {response.usage_metadata.candidates_token_count}")
+                is_verbose = "verbose" in flags
+                if response.function_calls:
+                    for function_call_part in response.function_calls:
+                        function_call_result = call_function(function_call_part, verbose=is_verbose)
+                        if not function_call_result.parts[0].function_response.response:
+                            raise Exception("Function Response missing")
+                        messages.append(
+                            types.Content(
+                                role="tool",
+                                parts=[function_call_result.parts[0]]
+                            )
+                        )
+                        if is_verbose:
+                            print(f"-> {function_call_result.parts[0].function_response.response}")
+
+                # if func_calls_str:
+                #     print(func_calls_str)
+                
+                if ("verbose" in flags):
+                    print(f"User prompt: {user_prompt}")
+                    print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}\nResponse tokens: {response.usage_metadata.candidates_token_count}")
+            except Exception as e:
+                print(e)
 
 if __name__ == "__main__":
     main()
